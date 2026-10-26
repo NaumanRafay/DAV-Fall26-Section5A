@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Task 5 - Pakistan Cities Point Map</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  .basemap { fill: #f2f2f2; stroke: #bbb; }
+  .city { fill: #e76f51; fill-opacity: 0.55; stroke: #9c3b1a; stroke-width: 0.8px; }
+  .city-label { font-size: 11px; fill: #222; pointer-events: none; }
+  .tooltip { position:absolute; background:#222; color:#fff; padding:6px 10px; border-radius:4px; font-size:12px; pointer-events:none; opacity:0; }
+</style>
+</head>
+<body>
+<h2>Pakistan Cities — Population Point Map</h2>
+<svg id="chart" width="700" height="750"></svg>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const width = 700, height = 750;
+const svg = d3.select("#chart");
+const tooltip = d3.select("#tooltip");
+
+Promise.all([
+  d3.csv("dataset/pakistan_cities.csv", d3.autoType),
+  d3.json("https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json")
+]).then(([cities, world]) => {
+
+  const pakistan = world.features.find(f => f.properties.name === "Pakistan");
+
+  // Mercator projection fit tightly to Pakistan's boundary -- fitSize scales
+  // and translates the projection so the given geometry exactly fills the
+  // pixel box, which is what "zooms" the map to the country.
+  const projection = d3.geoMercator().fitSize([width, height], pakistan);
+  const path = d3.geoPath(projection);
+
+  svg.append("path").datum(pakistan).attr("class", "basemap").attr("d", path);
+
+  const rScale = d3.scaleSqrt().domain([0, d3.max(cities, d => d.pop)]).range([3, 32]);
+
+  const cityG = svg.selectAll("g.city-g")
+    .data(cities).join("g").attr("class", "city-g")
+    .attr("transform", d => {
+      // projection([lon, lat]) -- LONGITUDE FIRST. Swapping this is the #1
+      // D3-geo mistake and silently places every point in the wrong spot.
+      const [x, y] = projection([d.lon, d.lat]);
+      return `translate(${x},${y})`;
+    });
+
+  cityG.append("circle")
+    .attr("class", "city")
+    .attr("r", d => rScale(d.pop))
+    .on("mouseover", (event, d) => {
+      tooltip.style("opacity", 1).html(`<b>${d.name}</b><br>Population: ${d.pop}M`);
+    })
+    .on("mousemove", event => tooltip.style("left", event.pageX+12+"px").style("top", event.pageY-20+"px"))
+    .on("mouseout", () => tooltip.style("opacity", 0));
+
+  // Only LABEL cities above 1 million; every city still gets a tooltip.
+  cityG.filter(d => d.pop > 1)
+    .append("text")
+    .attr("class", "city-label")
+    .attr("x", d => rScale(d.pop) + 4).attr("y", 4)
+    .text(d => d.name);
+});
+</script>
+</body>
+</html>

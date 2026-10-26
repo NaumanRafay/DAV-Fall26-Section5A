@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Task 4 - World Population Choropleth</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  .country { stroke: #fff; stroke-width: 0.5px; }
+  .country:hover { stroke: #000; stroke-width: 1.5px; }
+  .tooltip { position:absolute; background:#222; color:#fff; padding:6px 10px; border-radius:4px; font-size:12px; pointer-events:none; opacity:0; }
+</style>
+</head>
+<body>
+<h2>World Population Choropleth</h2>
+<svg id="chart" width="960" height="550"></svg>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const width = 960, height = 550;
+const svg = d3.select("#chart");
+const tooltip = d3.select("#tooltip");
+
+// If a country still shows gray despite having a population row, the geojson's
+// name differs from the csv's -- add the mapping here (csv name -> geojson name).
+const aliases = { "United States": "United States of America" };
+
+Promise.all([
+  d3.csv("dataset/population.csv", d3.autoType),
+  d3.json("https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json")
+]).then(([pop, world]) => {
+
+  const popByName = new Map(pop.map(d => [d.country, d.population_millions]));
+
+  // Projection converts (longitude, latitude) -> (x, y) pixels; geoPath turns
+  // GeoJSON geometries into SVG "d" path strings using that projection.
+  const projection = d3.geoNaturalEarth1().fitSize([width, height], world);
+  const path = d3.geoPath(projection);
+
+  const maxPop = d3.max(pop, d => d.population_millions);
+  // Square-root NORMALIZE before handing the value to the color interpolator:
+  // this keeps mid-range countries visually distinguishable instead of the
+  // whole scale being dominated by outliers like India/China.
+  const normalize = d3.scaleSqrt().domain([0, maxPop]).range([0, 1]);
+  const color = v => d3.interpolateBlues(normalize(v));
+
+  function valueFor(feature) {
+    const name = feature.properties.name;
+    let v = popByName.get(name);
+    if (v === undefined) {
+      for (const [csvName, geoName] of Object.entries(aliases)) {
+        if (geoName === name) { v = popByName.get(csvName); break; }
+      }
+    }
+    return v;
+  }
+
+  svg.append("g").selectAll("path")
+    .data(world.features)
+    .join("path")
+    .attr("class", "country")
+    .attr("d", path)
+    .attr("fill", d => {
+      const v = valueFor(d);
+      return v === undefined ? "#eee" : color(v); // missing data -> light gray
+    })
+    .on("mouseover", (event, d) => {
+      const v = valueFor(d);
+      tooltip.style("opacity", 1).html(`<b>${d.properties.name}</b><br>${v !== undefined ? v + "M people" : "No data"}`);
+    })
+    .on("mousemove", event => tooltip.style("left", event.pageX+12+"px").style("top", event.pageY-20+"px"))
+    .on("mouseout", () => tooltip.style("opacity", 0));
+
+  // ---- Legend: gradient bar with min/max labels ----
+  const legendWidth = 200, legendHeight = 12;
+  const legendG = svg.append("g").attr("transform", `translate(${width-legendWidth-30}, ${height-40})`);
+  const gradient = svg.append("defs").append("linearGradient").attr("id", "legend-gradient");
+  d3.range(0, 1.01, 0.1).forEach(t => {
+    gradient.append("stop").attr("offset", `${t*100}%`).attr("stop-color", d3.interpolateBlues(Math.sqrt(t)));
+  });
+  legendG.append("rect").attr("width", legendWidth).attr("height", legendHeight).style("fill", "url(#legend-gradient)");
+  legendG.append("text").attr("x", 0).attr("y", -4).text("0M");
+  legendG.append("text").attr("x", legendWidth).attr("y", -4).attr("text-anchor", "end").text(`${maxPop}M`);
+  legendG.append("text").attr("x", legendWidth/2).attr("y", -4).attr("text-anchor", "middle").text("Population");
+});
+</script>
+</body>
+</html>

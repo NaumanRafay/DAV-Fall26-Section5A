@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Task 2 - University Structure Dendrogram</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  .node circle { stroke: #fff; stroke-width: 1px; }
+  .node text { font-size: 11px; }
+</style>
+</head>
+<body>
+<h2>University Structure Dendrogram</h2>
+<p style="font-size:13px;color:#555">Click a department node to collapse/expand its courses.</p>
+<svg id="chart" width="960" height="600"></svg>
+
+<script>
+const width = 960, height = 600;
+const margin = { left: 160, right: 160, top: 20 };
+const svg = d3.select("#chart");
+const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+const dx = 24; // vertical spacing between sibling leaves
+const dy = (width - margin.left - margin.right) / 3; // horizontal spacing per depth level
+
+d3.csv("dataset/university.csv", d3.autoType).then(data => {
+  const grouped = d3.group(data, d => d.department);
+  const rootData = {
+    name: "University",
+    children: Array.from(grouped, ([department, courses]) => ({
+      name: department,
+      children: courses.map(c => ({ name: c.course }))
+    }))
+  };
+
+  const root = d3.hierarchy(rootData);
+  root.x0 = dx; root.y0 = 0;
+  root.descendants().forEach((d, i) => { d.id = i; });
+
+  const depthColor = d3.scaleOrdinal().domain([0, 1, 2]).range(["#e63946", "#457b9d", "#2a9d8f"]);
+  const gLink = g.append("g").attr("fill", "none").attr("stroke", "#999").attr("stroke-width", 1.5);
+  const gNode = g.append("g");
+  const diagonal = d3.linkHorizontal().x(d => d.y).y(d => d.x);
+
+  function update(source) {
+    // d3.cluster() is the dendrogram LAYOUT: every LEAF lands at the same depth
+    // (unlike d3.tree(), which spaces nodes by subtree size), giving the flat,
+    // comb-like leaf line that makes it a dendrogram rather than a general tree.
+    const cluster = d3.cluster().nodeSize([dx, dy]);
+    cluster(root);
+
+    let x0 = Infinity, x1 = -Infinity;
+    root.each(d => { if (d.x > x1) x1 = d.x; if (d.x < x0) x0 = d.x; });
+    svg.attr("height", x1 - x0 + margin.top * 2);
+    g.attr("transform", `translate(${margin.left},${margin.top - x0})`);
+
+    const nodes = root.descendants();
+    const links = root.links();
+
+    const node = gNode.selectAll("g.node").data(nodes, d => d.id);
+
+    const nodeEnter = node.enter().append("g")
+      .attr("class", "node")
+      .attr("transform", `translate(${source.y0},${source.x0})`)
+      .on("click", (event, d) => {
+        if (!d.children && !d._children) return; // leaf = nothing to toggle
+        if (d.children) { d._children = d.children; d.children = null; }
+        else { d.children = d._children; d._children = null; }
+        update(d);
+      });
+
+    nodeEnter.append("circle")
+      .attr("r", 5)
+      .attr("fill", d => depthColor(d.depth))
+      .attr("cursor", d => (d.children || d._children) ? "pointer" : "default");
+
+    // Leaf (course) labels go RIGHT of the node so they don't cross the link
+    // feeding into them; root/department labels go LEFT.
+    nodeEnter.append("text")
+      .attr("dy", "0.32em")
+      .attr("x", d => d.children || d._children ? -10 : 10)
+      .attr("text-anchor", d => d.children || d._children ? "end" : "start")
+      .text(d => d.data.name);
+
+    node.merge(nodeEnter).transition().duration(400)
+      .attr("transform", d => `translate(${d.y},${d.x})`);
+
+    node.exit().transition().duration(400)
+      .attr("transform", `translate(${source.y},${source.x})`)
+      .remove();
+
+    const link = gLink.selectAll("path").data(links, d => d.target.id);
+
+    const linkEnter = link.enter().append("path")
+      .attr("d", () => {
+        const o = { x: source.x0, y: source.y0 };
+        return diagonal({ source: o, target: o });
+      });
+
+    link.merge(linkEnter).transition().duration(400).attr("d", diagonal);
+
+    link.exit().transition().duration(400)
+      .attr("d", () => {
+        const o = { x: source.x, y: source.y };
+        return diagonal({ source: o, target: o });
+      })
+      .remove();
+
+    root.eachBefore(d => { d.x0 = d.x; d.y0 = d.y; });
+  }
+
+  update(root);
+});
+</script>
+</body>
+</html>

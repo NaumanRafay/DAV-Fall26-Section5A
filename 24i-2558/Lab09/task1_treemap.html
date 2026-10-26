@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Task 1 - Course Enrollment Treemap</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  .tooltip { position: absolute; background: #222; color: #fff; padding: 6px 10px;
+    border-radius: 4px; font-size: 12px; pointer-events: none; opacity: 0; }
+  .legend-item { display: inline-flex; align-items: center; margin-right: 15px; font-size: 13px; }
+  .legend-swatch { width: 14px; height: 14px; margin-right: 5px; display:inline-block; }
+  rect.node { stroke: #fff; stroke-width: 1px; }
+  text.label { font-size: 10px; fill: #fff; pointer-events: none; }
+  text.dept { pointer-events: none; }
+</style>
+</head>
+<body>
+<h2>Course Enrollment Treemap</h2>
+<div id="legend"></div>
+<svg id="chart" width="900" height="500"></svg>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const width = 900, height = 500;
+const svg = d3.select("#chart");
+const tooltip = d3.select("#tooltip");
+
+d3.csv("dataset/university.csv", d3.autoType).then(data => {
+  // ---- Reshape flat rows into a University -> Department -> Course hierarchy ----
+  // d3.group() buckets rows by department first, so each department becomes a
+  // branch with its courses as children (leaves) -- the nested shape d3.hierarchy()
+  // needs (an object with a "children" array), built from otherwise flat CSV rows.
+  const grouped = d3.group(data, d => d.department);
+
+  const root = {
+    name: "University",
+    children: Array.from(grouped, ([department, courses]) => ({
+      name: department,
+      children: courses.map(c => ({ name: c.course, department: c.department, students: c.students }))
+    }))
+  };
+
+  // d3.hierarchy() walks the nested object and builds parent/child links.
+  // .sum() rolls values up from leaves to parents, so departments and the
+  // university root also get a total (needed for the treemap's area math).
+  const hierarchyRoot = d3.hierarchy(root)
+    .sum(d => d.students)
+    .sort((a, b) => b.value - a.value);
+
+  // d3.treemap() is the LAYOUT: it draws nothing itself, it just mutates every
+  // node in place, adding x0,y0,x1,y1 (pixel bounds) proportional to value
+  // relative to siblings. We bind SVG <rect>s to those coordinates afterwards.
+  d3.treemap()
+    .size([width, height])
+    .paddingOuter(3)
+    .paddingTop(18)
+    .paddingInner(2)
+    (hierarchyRoot);
+
+  const departments = hierarchyRoot.children.map(d => d.data.name);
+  const color = d3.scaleOrdinal().domain(departments).range(d3.schemeTableau10);
+  const leaves = hierarchyRoot.leaves(); // courses only
+
+  const nodeGroup = svg.selectAll("g.node")
+    .data(leaves)
+    .join("g")
+    .attr("class", "node")
+    .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+  nodeGroup.append("rect")
+    .attr("class", "node")
+    .attr("width", d => d.x1 - d.x0)
+    .attr("height", d => d.y1 - d.y0)
+    .attr("fill", d => color(d.data.department))
+    .on("mouseover", (event, d) => {
+      tooltip.style("opacity", 1)
+        .html(`<b>${d.data.name}</b><br>Department: ${d.data.department}<br>Students: ${d.data.students}`);
+    })
+    .on("mousemove", event => {
+      tooltip.style("left", (event.pageX + 12) + "px").style("top", (event.pageY - 20) + "px");
+    })
+    .on("mouseout", () => tooltip.style("opacity", 0));
+
+  // Course label only if the rectangle is wide enough to hold it
+  nodeGroup.append("text")
+    .attr("class", "label")
+    .attr("x", 4).attr("y", 14)
+    .text(d => (d.x1 - d.x0) > 40 ? d.data.name : "");
+
+  // Department header label, sitting in the paddingTop space reserved above each group
+  svg.selectAll("text.dept")
+    .data(hierarchyRoot.children)
+    .join("text")
+    .attr("class", "dept")
+    .attr("x", d => d.x0 + 4).attr("y", d => d.y0 + 12)
+    .attr("font-size", 12).attr("font-weight", "bold").attr("fill", "#000")
+    .text(d => d.data.name);
+
+  // ---- Color legend ----
+  const legend = d3.select("#legend").selectAll(".legend-item")
+    .data(departments).join("div").attr("class", "legend-item");
+  legend.append("span").attr("class", "legend-swatch").style("background", d => color(d));
+  legend.append("span").text(d => d);
+});
+</script>
+</body>
+</html>

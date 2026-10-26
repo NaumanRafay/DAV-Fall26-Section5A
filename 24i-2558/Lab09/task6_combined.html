@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Task 6 - Combined Spatial Encoding Map</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  .basemap { fill: #f2f2f2; stroke: #bbb; }
+  .route { fill: none; stroke: #888; stroke-opacity: 0.55; }
+  .route.faded, .city.faded { opacity: 0.1; }
+  .city-label { font-size: 11px; fill: #222; pointer-events: none; }
+  .tooltip { position:absolute; background:#222; color:#fff; padding:6px 10px; border-radius:4px; font-size:12px; pointer-events:none; opacity:0; }
+</style>
+</head>
+<body>
+<h2>Combined Map: Cities, Population &amp; Flight Routes</h2>
+<svg id="chart" width="750" height="800"></svg>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const width = 750, height = 800;
+const svg = d3.select("#chart");
+const tooltip = d3.select("#tooltip");
+
+Promise.all([
+  d3.csv("dataset/pakistan_cities.csv", d3.autoType),
+  d3.csv("dataset/flights.csv", d3.autoType),
+  d3.json("https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json")
+]).then(([cities, edges, world]) => {
+
+  const pakistan = world.features.find(f => f.properties.name === "Pakistan");
+  const projection = d3.geoMercator().fitSize([width, height], pakistan);
+  const path = d3.geoPath(projection);
+
+  svg.append("path").datum(pakistan).attr("class", "basemap").attr("d", path);
+
+  const cityByName = new Map(cities.map(d => [d.name, d]));
+
+  // Degree per city = number of distinct routes touching it -> hub status.
+  const degree = new Map(cities.map(d => [d.name, 0]));
+  edges.forEach(e => { degree.set(e.source, degree.get(e.source)+1); degree.set(e.target, degree.get(e.target)+1); });
+
+  const rScale = d3.scaleSqrt().domain([0, d3.max(cities, d => d.pop)]).range([4, 30]);
+  const widthScale = d3.scaleLinear().domain([0, d3.max(edges, d => d.flights)]).range([1, 8]);
+  const hubColor = name => degree.get(name) >= 4 ? "#d62828" : "#2a6f97";
+
+  // ---- Routes drawn FIRST so cities sit on top of them ----
+  const routeG = svg.append("g").selectAll("path.route")
+    .data(edges).join("path")
+    .attr("class", "route")
+    .attr("stroke-width", d => widthScale(d.flights))
+    .attr("d", d => {
+      const s = cityByName.get(d.source), t = cityByName.get(d.target);
+      const [x1, y1] = projection([s.lon, s.lat]);
+      const [x2, y2] = projection([t.lon, t.lat]);
+      return `M${x1},${y1}L${x2},${y2}`;
+    });
+
+  const cityG = svg.append("g").selectAll("g.city-g")
+    .data(cities).join("g").attr("class", "city-g")
+    .attr("transform", d => {
+      const [x, y] = projection([d.lon, d.lat]);
+      return `translate(${x},${y})`;
+    });
+
+  cityG.append("circle")
+    .attr("class", "city")
+    .attr("r", d => rScale(d.pop))
+    .attr("fill", d => hubColor(d.name))
+    .attr("fill-opacity", 0.75)
+    .on("mouseover", (event, d) => {
+      tooltip.style("opacity", 1).html(`<b>${d.name}</b><br>Pop: ${d.pop}M<br>Routes: ${degree.get(d.name)}`);
+      routeG.classed("faded", e => e.source !== d.name && e.target !== d.name);
+      cityG.selectAll("circle").classed("faded", c => c.name !== d.name &&
+        !edges.some(e => (e.source===d.name && e.target===c.name) || (e.target===d.name && e.source===c.name)));
+    })
+    .on("mousemove", event => tooltip.style("left", event.pageX+12+"px").style("top", event.pageY-20+"px"))
+    .on("mouseout", () => {
+      tooltip.style("opacity", 0);
+      routeG.classed("faded", false);
+      cityG.selectAll("circle").classed("faded", false);
+    });
+
+  cityG.filter(d => d.pop > 1).append("text")
+    .attr("class", "city-label")
+    .attr("x", d => rScale(d.pop)+4).attr("y", 4)
+    .text(d => d.name);
+
+  // ---- Legend: the four encodings ----
+  const legend = svg.append("g").attr("transform", `translate(20, ${height-130})`);
+  legend.append("text").attr("font-weight", "bold").text("Encoding legend");
+  const rows = [
+    ["Position", "location on map (lon/lat → projection)"],
+    ["Circle size", "city population (sqrt scale)"],
+    ["Color", "red = hub (≥4 routes), blue = non-hub"],
+    ["Line width", "flights per week on that route"]
+  ];
+  rows.forEach((r, i) => {
+    legend.append("text").attr("y", 18+i*16).attr("font-weight", "bold").text(r[0] + ": ");
+    legend.append("text").attr("x", 70).attr("y", 18+i*16).text(r[1]);
+  });
+});
+</script>
+</body>
+</html>
